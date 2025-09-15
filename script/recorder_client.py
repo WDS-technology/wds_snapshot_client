@@ -76,6 +76,9 @@ class RawImageClient:
 
         # If no delay, use single command with -n flag
         if delay_s == 0:
+            if num_of_frames > 1:
+                print(f"[RawImageClient] WARNING: Taking {num_of_frames} frames with 0 time delta - frames will be captured as fast as possible without delay")
+                print(f"[RawImageClient] This may not provide the intended time spacing between frames")
             print(f"[RawImageClient] No delay - single command for {num_of_frames} frames")
             result = self.send_raw_image(camera_name, destination, num_of_frames, base_idx, batch_timestamp)
             return [result]

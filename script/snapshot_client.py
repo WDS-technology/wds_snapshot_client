@@ -18,13 +18,69 @@ class SnapshotClient:
 
 
     def send_snapshot(self, camera_name: str, destination: str, idx = None, timestamp = None):
-        
+
         # Use provided timestamp or generate new one (UTC+3)
         if timestamp is None:
             from datetime import timedelta
             utc_plus_3 = datetime.now() + timedelta(hours=3)
             timestamp = utc_plus_3.strftime("%d%m%Y_%H%M%S")
-        
+
+        # Handle "both" cameras - send commands to hires and hires2
+        if camera_name.lower() == "both":
+            results = []
+            cameras = ["hires", "hires2"]
+
+            for cam in cameras:
+                suffix = f"_{idx}" if idx is not None else ""
+                if not destination.endswith('/'):
+                    destination += '/'
+                filename = f"{cam}_{timestamp}{suffix}.jpeg"
+                path = os.path.join(destination, filename)
+
+                # Command format with _snapshot suffix
+                cmd = f"voxl-send-command {cam}_snapshot snapshot {path}"
+                logging.info(f"[SnapshotClient] Sending command for {cam}: {cmd}")
+
+                try:
+                    response = self.client.send_sync(cmd)
+                    success, message, file_path = self.response_handler.parse_response(response)
+
+                    result = {
+                        'success': success,
+                        'message': message,
+                        'file_path': file_path,
+                        'command': cmd,
+                        'response': response,
+                        'camera': cam
+                    }
+
+                    if success:
+                        logging.info(f"[SnapshotClient] {cam} Success: {message}")
+                    else:
+                        logging.error(f"[SnapshotClient] {cam} Failed: {message}")
+
+                    results.append(result)
+                except Exception as e:
+                    error_result = {
+                        'success': False,
+                        'message': f"Client error for {cam}: {e}",
+                        'file_path': None,
+                        'command': cmd,
+                        'response': None,
+                        'camera': cam
+                    }
+                    logging.error(f"[SnapshotClient] {cam} Exception: {e}")
+                    results.append(error_result)
+
+            # Return combined results for both cameras
+            return {
+                'success': all(r['success'] for r in results),
+                'message': f"Both cameras processed",
+                'results': results,
+                'cameras': cameras
+            }
+
+        # Single camera handling (existing logic)
         suffix = f"_{idx}" if idx is not None else ""
         if not destination.endswith('/'):
             destination += '/'
@@ -38,7 +94,7 @@ class SnapshotClient:
         try:
             response = self.client.send_sync(cmd)
             success, message, file_path = self.response_handler.parse_response(response)
-            
+
             result = {
                 'success': success,
                 'message': message,
@@ -46,12 +102,12 @@ class SnapshotClient:
                 'command': cmd,
                 'response': response
             }
-            
+
             if success:
                 logging.info(f"[SnapshotClient] Success: {message}")
             else:
                 logging.error(f"[SnapshotClient] Failed: {message}")
-                
+
             return result
         except Exception as e:
             error_result = {
@@ -63,19 +119,21 @@ class SnapshotClient:
             }
             logging.error(f"[SnapshotClient] Exception: {e}")
             return error_result
-    def send_multiple_snapshots(self, camera_name: str, destination: str, num_images: int, delay_s=0.0, base_idx=0):
+    def send_multiple_snapshots(self, camera_name: str, destination: str, num_images: int, delay_s=0.0, base_idx=0, color: int = 1):
         """Send multiple snapshot commands and collect all results"""
-        results = []
+
+        #TODO: implelent grey and color support
         success_count = 0
-        
+        results = []
+
         # Generate timestamp once for the entire batch (UTC+3)
         from datetime import timedelta
         utc_plus_3 = datetime.now() + timedelta(hours=3)
         batch_timestamp = utc_plus_3.strftime("%d%m%Y_%H%M%S")
         logging.info(f"[SnapshotClient] Batch timestamp: {batch_timestamp}")
-        
+
         for i in range(num_images):
-            current_idx = base_idx * num_images + i if base_idx else i
+            current_idx = i  # Always start from 0 for each batch
             logging.info(f"[SnapshotClient] Taking snapshot {i+1}/{num_images} (idx: {current_idx})")
             
             # Pass the same timestamp to all snapshots in this batch

@@ -70,6 +70,7 @@ class SnapshotNode:
         self.frame_delta = float(os.getenv("FRAME_DELTA", "0"))
         self.num_images = int(os.getenv("NUM_IMAGES_PER_COMMAND", "3"))
         self.cmd_type = os.getenv("COMMAND_TYPE", "RAW_IMAGE")
+        self.color = int(os.getenv("COLOR", "0"))
         self.destination = (
             os.path.join(self.base_destination, self.folder)
             if self.folder
@@ -197,7 +198,6 @@ class SnapshotNode:
                 logging.warning(f"Unsupported command type: {self.cmd_type}")
                 return
 
-            self.idx += 1  # Increment index for each command
             print(f"[DEBUG] Processing command type: {self.cmd_type}")
 
             if self.cmd_type == "SNAPSHOT":
@@ -221,7 +221,7 @@ class SnapshotNode:
 
             client = SnapshotClient()
             client.send_multiple_snapshots(
-                camera_pipeline, self.destination, self.num_images, self.idx
+                camera_pipeline, self.destination, self.num_images, 0, self.color
             )
         except Exception as e:
             logging.error(f"[SnapshotNode] Snapshot error: {e}")
@@ -233,7 +233,9 @@ class SnapshotNode:
             print(f"[DEBUG] take_raw_image called with camera: {camera_pipeline}")
             print(f"[DEBUG] Destination directory: {self.destination}")
             print(f"[DEBUG] Number of images: {self.num_images}")
-            print(f"[DEBUG] Index: {self.idx}")
+            print(f"[DEBUG] Starting index: 0")
+            color_mode = "color" if self.color == 1 else "grey"
+            print(f"[DEBUG] Color mode: {color_mode} (COLOR={self.color})")
 
             # Create destination directory if it doesn't exist
             os.makedirs(self.destination, exist_ok=True)
@@ -244,7 +246,7 @@ class SnapshotNode:
                 f"[SnapshotClient] Taking {self.num_images} raw images for camera pipeline: {camera_pipeline} with {self.frame_delta}s delay"
             )
             result = client.send_multiple_raw_images(
-                camera_pipeline, self.destination, self.num_images, self.idx, self.frame_delta
+                camera_pipeline, self.destination, self.num_images, 0, self.frame_delta, self.color
             )
             print(f"[DEBUG] Raw image result: {result}")
             # Implement the raw image logic here if needed

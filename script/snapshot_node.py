@@ -2,6 +2,7 @@
 
 import rospy
 from std_msgs.msg import String
+from geometry_msgs.msg import PoseStamped
 import logging
 import os
 import sys
@@ -54,6 +55,14 @@ class UTCPlus3Formatter(logging.Formatter):
         return line
 
 
+try:
+    from py_csv_logger import CsvLogger, ImageMetadata
+except ImportError as e:
+    rospy.logerr(f"Failed to import C++ CsvLogger module: {e}")
+    # Handle the error, maybe exit or run in a mode without logging
+    CsvLogger, ImageMetadata = None, None
+
+
 class SnapshotNode:
     def __init__(self):
         rospy.init_node("wds_snapshot_client_node", anonymous=False)
@@ -76,9 +85,23 @@ class SnapshotNode:
             if self.folder
             else self.base_destination
         )
-        self.log_file_path = rospy.get_param(
-            "log_file_path", "/data/wds/logs"
-        )  # TODO: we need to fidn latest fodlr to save to since we are suppsoed to save in the mission flow logs
+        self.log_file_path = rospy.get_param("log_file_path", "/data/wds/logs")
+        # TODO: we need to fidn latest fodlr to save to since we are suppsoed to save in the mission flow logs
+
+        # Instantiate the C++ CsvLogger
+        self.csv_logger = None
+        if CsvLogger is not None:
+            try:
+                self.csv_logger = CsvLogger(self.destination)
+                if not self.csv_logger.initialize():
+                    rospy.logerr("Failed to initialize C++ CsvLogger!")
+                    self.csv_logger = None
+                else:
+                    rospy.loginfo("C++ CsvLogger initialized successfully.")
+            except Exception as e:
+                rospy.logerr(f"Error instantiating C++ CsvLogger: {e}")
+                self.csv_logger = None
+
         self.python_log_level = rospy.get_param("~python_log_level", "DEBUG").upper()
         socket_path = rospy.get_param(
             "~socket_path", "/tmp/snapshot_comm_socket/snapshot.sock"
@@ -97,6 +120,12 @@ class SnapshotNode:
         self.sub = rospy.Subscriber(
             "/corvus/payload/take_picture", String, self.take_picture_callback
         )
+
+        # QVIO pose subscriber for position logging
+        self.qvio_sub = rospy.Subscriber(
+            "/corvus/pose/fixed", PoseStamped, self.qvio_pose_callback
+        )
+        self.latest_qvio_pose = None
 
         #  --- Set up logging ---
         self.setup_logging()
@@ -208,6 +237,15 @@ class SnapshotNode:
         except Exception as e:
             logging.error(f"[SnapshotNode] Error while processing request: {e}")
 
+    def qvio_pose_callback(self, msg: PoseStamped):
+        """Callback for QVIO pose data from /corvus/pose/fixed - just store latest pose"""
+        try:
+            self.latest_qvio_pose = msg
+            logging.debug(f"[SnapshotNode] QVIO pose updated: pos=({msg.pose.position.x:.3f}, {msg.pose.position.y:.3f}, {msg.pose.position.z:.3f})")
+        except Exception as e:
+            logging.error(f"[SnapshotNode] Error processing QVIO pose: {e}")
+
+
     def shutdown(self):
         logging.info("[SnapshotNode] Shutting down...")
         try:
@@ -246,9 +284,16 @@ class SnapshotNode:
                 f"[SnapshotClient] Taking {self.num_images} raw images for camera pipeline: {camera_pipeline} with {self.frame_delta}s delay"
             )
             result = client.send_multiple_raw_images(
-                camera_pipeline, self.destination, self.num_images, 0, self.frame_delta, self.color
+                camera_pipeline,
+                self.destination,
+                self.num_images,
+                0,
+                self.frame_delta,
+                self.color,
+                self.latest_qvio_pose,
             )
             print(f"[DEBUG] Raw image result: {result}")
+
             # Implement the raw image logic here if needed
             return "SUCCESS"
         except Exception as e:

@@ -10,11 +10,27 @@ project(wds_snapshot_client)
 find_package(catkin REQUIRED COMPONENTS
   rospy
   std_msgs
+  geometry_msgs
 )
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
 
+## Add this line to find Pybind11
+find_package(pybind11 QUIET)
+if(NOT pybind11_FOUND)
+  # Fallback to pip-installed pybind11
+  execute_process(
+    COMMAND python3 -c "import pybind11; print(pybind11.get_cmake_dir())"
+    OUTPUT_VARIABLE pybind11_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  if(pybind11_DIR)
+    find_package(pybind11 REQUIRED PATHS ${pybind11_DIR})
+  else()
+    message(FATAL_ERROR "pybind11 not found. Install with: pip3 install pybind11")
+  endif()
+endif()
 
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
@@ -115,8 +131,9 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-# include
+  include
   ${catkin_INCLUDE_DIRS}
+  ${PYBIND11_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -149,6 +166,16 @@ include_directories(
 #   ${catkin_LIBRARIES}
 # )
 
+## Add the Pybind11 module target
+pybind11_add_module(py_csv_logger SHARED
+  src/csv_logger.cpp
+  src/csv_logger_py.cpp
+)
+## Link the C++ library and Python libraries (use PRIVATE to match pybind11 keyword syntax)
+target_link_libraries(py_csv_logger PRIVATE
+  ${catkin_LIBRARIES}
+)
+
 #############
 ## Install ##
 #############
@@ -158,10 +185,15 @@ include_directories(
 
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
-# catkin_install_python(PROGRAMS
-#   scripts/my_python_script
-#   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-# )
+catkin_install_python(PROGRAMS
+  script/snapshot_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+## Install the generated Pybind11 module
+
+install(TARGETS py_csv_logger
+  DESTINATION ${CATKIN_PACKAGE_PYTHON_DESTINATION}
+)
 
 ## Mark executables for installation
 ## See http://docs.ros.org/melodic/api/catkin/html/howto/format1/building_executables.html

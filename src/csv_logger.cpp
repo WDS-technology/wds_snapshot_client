@@ -5,6 +5,8 @@
 #include <sstream>
 #include <iomanip>
 #include <cmath>
+#include <cerrno>
+
 
 namespace wds_snapshot {
 
@@ -19,9 +21,6 @@ CsvLogger::~CsvLogger() {
     if (hires2_file_.is_open()) {
         hires2_file_.close();
     }
-    // if (qvio_file_.is_open()) {
-    //     qvio_file_.close();
-    // }
 }
 
 bool CsvLogger::createDirectories(const std::string& path) {
@@ -94,38 +93,10 @@ bool CsvLogger::initialize() {
                      << "Orientation_W,Orientation_X,Orientation_Y,Orientation_Z\n";
     }
 
-    // qvio_file_.open(qvio_csv_path_, std::ios::out | std::ios::app);
-    // if (!qvio_file_.is_open()) {
-    //     std::cerr << "Failed to open qvio_sensor.csv" << std::endl;
-    //     return false;
-    // }
-
-    // qvio_file_.seekp(0, std::ios::end);
-    // if (qvio_file_.tellp() == 0) {
-    //     qvio_file_ << "Batch_ID,Timestamp,Position_X,Position_Y,"
-    //                << "Position_Z,Orientation_W,Orientation_X,Orientation_Y,"
-    //                << "Orientation_Z\n";
-    // }
 
     std::cout << "[CsvLogger] Initialized CSV files in: " << base_path_ << std::endl;
     return true;
 }
-
-// std::string CsvLogger::timestampToHHMMSS(double timestamp) {
-//     // Convert timestamp to time_t
-//     std::time_t time_val = static_cast<std::time_t>(timestamp);
-
-//     // Convert to local time structure
-//     std::tm* local_time = std::localtime(&time_val);
-
-//     // Format as HHMMSS
-//     std::ostringstream oss;
-//     oss << std::setfill('0') << std::setw(2) << local_time->tm_hour
-//         << std::setw(2) << local_time->tm_min
-//         << std::setw(2) << local_time->tm_sec;
-
-//     return oss.str();
-// }
 
 void CsvLogger::writeImageMetadata(const std::string& camera_name,
                                    const ImageMetadata& metadata) {
@@ -169,28 +140,6 @@ void CsvLogger::writeImageMetadata(const std::string& camera_name,
 
     file_ptr->flush();
 }
-
-// void CsvLogger::writeQvioMetadata(const QvioMetadata& metadata) {
-//     std::lock_guard<std::mutex> lock(qvio_mutex_);
-
-//     if (!qvio_file_.is_open()) {
-//         std::cerr << "[CsvLogger] QVIO CSV file not open" << std::endl;
-//         return;
-//     }
-
-//     qvio_file_ << metadata.batch_id << ","
-//                << metadata.timestamp_hhmmss << ","
-//                << std::fixed << std::setprecision(6)
-//                << metadata.position_x << ","
-//                << metadata.position_y << ","
-//                << metadata.position_z << ","
-//                << metadata.orientation_w << ","
-//                << metadata.orientation_x << ","
-//                << metadata.orientation_y << ","
-//                << metadata.orientation_z << "\n";
-
-//     qvio_file_.flush();
-// }
 
 void CsvLogger::setBasePath(const std::string& path) {
     base_path_ = path;

@@ -18,24 +18,19 @@ except ImportError:
 
 
 class RawImageClient:
-    def __init__(
-        self, socket_path="/tmp/snapshot_comm_socket/snapshot.sock", buffer_size=4096
-    ):
+    def __init__(self, socket_path="/tmp/snapshot_comm_socket/snapshot.sock", buffer_size=4096, csv_logger=None):
+
         self.client = UnixSocketClient(socket_path, buffer_size)
+        self.csv_logger = csv_logger  # Use external logger instead of creating own
+
         self.socket_path = socket_path
         self.buffer_size = buffer_size
         self.response_handler = ResponseHandler()
 
-        # Initialize CSV logger
-        self.csv_logger = None
-        if py_csv_logger:
-            self.csv_logger = py_csv_logger.CsvLogger("/tmp/csv_logs/")
-            if self.csv_logger.initialize():
-                print("[RawImageClient] CSV logger initialized at /tmp/csv_logs/")
-            else:
-                print("[RawImageClient] Failed to initialize CSV logger")
-                self.csv_logger = None
-
+       
+    def set_csv_logger(self, csv_logger):
+            """Set the CSV logger from external source"""
+            self.csv_logger = csv_logger
     def _log_image_metadata(
         self,
         camera_name: str,
@@ -112,8 +107,6 @@ class RawImageClient:
             destination += "/"
 
         destination += camera_name.lower() + "/"
-
-        # Use provided timestamp or generate new one (UTC+3)
 
         # Generate batch_id if not provided (use current epoch seconds)
         if batch_id is None:
@@ -223,16 +216,9 @@ class RawImageClient:
         """Send raw images - single command if no delay, multiple commands with delay"""
         import time
 
-        # Generate batch_id and timestamp once for the entire batch (UTC+3)
-        from datetime import timedelta
-        import time
-
-        utc_plus_3 = datetime.now() + timedelta(hours=3)
-        batch_timestamp_hhmmss = utc_plus_3.strftime("%H%M%S")  # Only HHMMSS
+        # Generate batch_id once for the entire batch
         batch_id = int(time.time()) % 100000  # Use last 5 digits of epoch
-        print(
-            f"[RawImageClient] Batch ID: {batch_id}, Timestamp: {batch_timestamp_hhmmss}"
-        )
+        print(f"[RawImageClient] Batch ID: {batch_id}")
 
         # If no delay, use single command with -n flag
         if delay_s == 0:

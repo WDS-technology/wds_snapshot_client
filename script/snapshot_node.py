@@ -87,6 +87,8 @@ class SnapshotNode:
         )
         self.log_file_path = rospy.get_param("log_file_path", "/data/wds/logs")
         # TODO: we need to fidn latest fodlr to save to since we are suppsoed to save in the mission flow logs
+             #  --- Set up logging ---
+        self.setup_logging()
 
         # Instantiate the C++ CsvLogger
         self.csv_logger = None
@@ -94,15 +96,14 @@ class SnapshotNode:
             try:
                 self.csv_logger = CsvLogger(self.destination)
                 if not self.csv_logger.initialize():
-                    rospy.logerr("Failed to initialize C++ CsvLogger!")
+                    logging.error("Failed to initialize C++ CsvLogger!")
                     self.csv_logger = None
                 else:
-                    rospy.loginfo("C++ CsvLogger initialized successfully.")
+                    logging.info("C++ CsvLogger initialized successfully.")
             except Exception as e:
-                rospy.logerr(f"Error instantiating C++ CsvLogger: {e}")
+                logging.error(f"Error instantiating C++ CsvLogger: {e}")
                 self.csv_logger = None
 
-        self.python_log_level = rospy.get_param("~python_log_level", "DEBUG").upper()
         socket_path = rospy.get_param(
             "~socket_path", "/tmp/snapshot_comm_socket/snapshot.sock"
         )
@@ -127,9 +128,7 @@ class SnapshotNode:
         )
         self.latest_qvio_pose = None
 
-        #  --- Set up logging ---
-        self.setup_logging()
-
+   
         logging.info(
             f"[SnapshotNode] Started. dest={self.destination} count={self.num_images} "
             f"type={self.cmd_type} socket={socket_path}"
@@ -188,7 +187,7 @@ class SnapshotNode:
 
             # Logger
             root_logger = logging.getLogger()
-            root_logger.setLevel(getattr(logging, self.python_log_level, logging.DEBUG))
+            root_logger.setLevel(logging.DEBUG)
             root_logger.handlers = []
             root_logger.addHandler(file_handler)
             root_logger.addHandler(stream_handler)
@@ -218,7 +217,7 @@ class SnapshotNode:
             return
 
         # Use the cmd_type from environment variable (loaded in __init__)
-        print(
+        logging.info(
             f"[SnapshotClient] Received command: {self.cmd_type} for camera pipeline: {camera_pipeline}"
         )
         try:
@@ -227,7 +226,7 @@ class SnapshotNode:
                 logging.warning(f"Unsupported command type: {self.cmd_type}")
                 return
 
-            print(f"[DEBUG] Processing command type: {self.cmd_type}")
+            logging.info(f"[DEBUG] Processing command type: {self.cmd_type}")
 
             if self.cmd_type == "SNAPSHOT":
                 results = self.take_snapshots(camera_pipeline)
@@ -241,7 +240,7 @@ class SnapshotNode:
         """Callback for QVIO pose data from /corvus/pose/fixed - just store latest pose"""
         try:
             self.latest_qvio_pose = msg
-            logging.debug(f"[SnapshotNode] QVIO pose updated: pos=({msg.pose.position.x:.3f}, {msg.pose.position.y:.3f}, {msg.pose.position.z:.3f})")
+            # logging.debug(f"[SnapshotNode] QVIO pose updated: pos=({msg.pose.position.x:.3f}, {msg.pose.position.y:.3f}, {msg.pose.position.z:.3f})")
         except Exception as e:
             logging.error(f"[SnapshotNode] Error processing QVIO pose: {e}")
 
@@ -268,19 +267,21 @@ class SnapshotNode:
     def take_raw_image(self, camera_pipeline):
         """Take raw images using the raw image client"""
         try:
-            print(f"[DEBUG] take_raw_image called with camera: {camera_pipeline}")
-            print(f"[DEBUG] Destination directory: {self.destination}")
-            print(f"[DEBUG] Number of images: {self.num_images}")
-            print(f"[DEBUG] Starting index: 0")
+            logging.debug(f"[DEBUG] take_raw_image called with camera: {camera_pipeline}")
+            logging.debug(f"[DEBUG] Destination directory: {self.destination}")
+            logging.debug(f"[DEBUG] Number of images: {self.num_images}")
+            logging.debug(f"[DEBUG] Starting index: 0")
             color_mode = "color" if self.color == 1 else "grey"
-            print(f"[DEBUG] Color mode: {color_mode} (COLOR={self.color})")
+            logging.debug(f"[DEBUG] Color mode: {color_mode} (COLOR={self.color})")
 
             # Create destination directory if it doesn't exist
             os.makedirs(self.destination, exist_ok=True)
-            print(f"[DEBUG] Destination directory created/verified")
+            logging.debug(f"[DEBUG] Destination directory created/verified")
 
-            client = RawImageClient()
-            print(
+            client = RawImageClient(csv_logger=self.csv_logger)
+
+
+            logging.info(
                 f"[SnapshotClient] Taking {self.num_images} raw images for camera pipeline: {camera_pipeline} with {self.frame_delta}s delay"
             )
             result = client.send_multiple_raw_images(
@@ -292,7 +293,7 @@ class SnapshotNode:
                 self.color,
                 self.latest_qvio_pose,
             )
-            print(f"[DEBUG] Raw image result: {result}")
+            logging.info(f"[DEBUG] Raw image result: {result}")
 
             # Implement the raw image logic here if needed
             return "SUCCESS"

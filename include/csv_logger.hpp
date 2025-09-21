@@ -13,26 +13,26 @@
 #include <ros/ros.h>
 #endif
 
+
 namespace wds_snapshot {
 
-struct ImageMetadata {
-    int batch_id;
-    int frame_number;
-    int height;
-    int width;
-    std::string encoding;
-    std::string image_file_path;
-    std::string image_title;
-    // QVIO position data
-    double position_x;
-    double position_y;
-    double position_z;
-    double orientation_w;
-    double orientation_x;
-    double orientation_y;
-    double orientation_z;
-};
-
+    struct ImageMetadata {
+        int batch_id = 0;                    // Add default initialization
+        int frame_number = 0;
+        int height = 0;
+        int width = 0;
+        std::string encoding = "";
+        std::string image_file_path = "";
+        std::string image_title = "";
+        // QVIO position data
+        double position_x = 0.0;
+        double position_y = 0.0;
+        double position_z = 0.0;
+        double orientation_w = 1.0;          // Identity quaternion
+        double orientation_x = 0.0;
+        double orientation_y = 0.0;
+        double orientation_z = 0.0;
+    };
 
 class CsvLogger {
 public:

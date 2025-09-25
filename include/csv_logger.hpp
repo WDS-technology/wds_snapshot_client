@@ -58,13 +58,13 @@ public:
 
 private:
     std::string base_path_;
-    std::string hires1_csv_path_;
+    std::string hires_csv_path_;
     std::string hires2_csv_path_;
 
-    std::ofstream hires1_file_;
+    std::ofstream hires_file_;
     std::ofstream hires2_file_;
 
-    std::mutex hires1_mutex_;
+    std::mutex hires_mutex_;
     std::mutex hires2_mutex_;
 
     std::atomic<int> current_batch_number_;

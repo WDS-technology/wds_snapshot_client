@@ -26,11 +26,19 @@ class RawImageClient:
         self.socket_path = socket_path
         self.buffer_size = buffer_size
         self.response_handler = ResponseHandler()
-
+        # Sequential batch counter starting from 0
+        self.batch_counter = 0
        
     def set_csv_logger(self, csv_logger):
             """Set the CSV logger from external source"""
             self.csv_logger = csv_logger
+    def _get_next_batch_id(self):
+        """Get the next sequential batch ID and increment counter"""
+        current_batch = self.batch_counter
+        self.batch_counter += 1
+        return current_batch
+
+        
     def _log_image_metadata(
         self,
         camera_name: str,
@@ -39,57 +47,69 @@ class RawImageClient:
         destination: str,
         qvio_pose=None,
     ):
+
+
         """Log single image metadata to CSV - called once per frame"""
+        logging.info(f"[DEBUG] About to log CSV for camera_name='{camera_name}', batch={batch_id}, frame={frame_idx}")
+
         if not self.csv_logger:
-            return
+            logging.warning("[RawImageClient] No CSV logger available, skipping metadata logging")
+            return False
+        
+        try:
 
-        # Determine camera folder and encoding based on camera name
-        camera_folder = (
-            "hires1"
-            if camera_name.startswith("hires_")
-            and not camera_name.startswith("hires2_")
-            else "hires2"
-        )
-        encoding = "mono8" if "_grey" in camera_name else "bgr8"
-        extension = ".gray" if "_grey" in camera_name else ".bin"
+            # Determine camera folder and encoding based on camera name
+            if camera_name.startswith("hires2"):
+                camera_folder = "hires2"
+            else:  # hires, hires_grey, hires_color all go to hires
+                camera_folder = "hires"
+        
+            encoding = "mono8" if "_grey" in camera_name else "bgr8"
+            extension = ".gray" if "_grey" in camera_name else ".bin"
 
-        # Create metadata for single frame
-        metadata = py_csv_logger.ImageMetadata()
-        metadata.batch_id = batch_id
-        metadata.frame_number = frame_idx  # Use frame_idx directly as frame_number
-        metadata.height = 3040
-        metadata.width = 4056
-        metadata.encoding = encoding
+            # Create metadata for single frame
+            metadata = py_csv_logger.ImageMetadata()
+            metadata.batch_id = batch_id
+            metadata.frame_number = frame_idx  # Use frame_idx directly as frame_number
+            metadata.height = 3040
+            metadata.width = 4056
+            metadata.encoding = encoding
 
-        # Actual filename format: {batch_id}_{frame_idx}_{camera}_{width}x{height}.ext
-        # Example: "12345_0_hires_grey_4056x3040.gray"
-        actual_filename = f"{batch_id}_{frame_idx}_{camera_name}_{metadata.width}x{metadata.height}{extension}"
+            # Actual filename format: {batch_id}_{frame_idx}_{camera}_{width}x{height}.ext
+            # Example: "12345_0_hires_grey_4056x3040.gray"
+            actual_filename = f"{batch_id}_{frame_idx}_{camera_name}_{metadata.width}x{metadata.height}{extension}"
 
-        # Full path already includes camera name in destination
-        metadata.image_file_path = os.path.join(destination, actual_filename)
-        metadata.image_title = actual_filename
+            # Full path already includes camera name in destination
+            metadata.image_file_path = os.path.join(destination, actual_filename)
+            metadata.image_title = actual_filename
 
-        # Set QVIO position data (use provided pose or zeros as default)
-        if qvio_pose:
-            metadata.position_x = qvio_pose.pose.position.x
-            metadata.position_y = qvio_pose.pose.position.y
-            metadata.position_z = qvio_pose.pose.position.z
-            metadata.orientation_w = qvio_pose.pose.orientation.w
-            metadata.orientation_x = qvio_pose.pose.orientation.x
-            metadata.orientation_y = qvio_pose.pose.orientation.y
-            metadata.orientation_z = qvio_pose.pose.orientation.z
-        else:
-            # Default values when no QVIO data available
-            metadata.position_x = 0.0
-            metadata.position_y = 0.0
-            metadata.position_z = 0.0
-            metadata.orientation_w = 1.0
-            metadata.orientation_x = 0.0
-            metadata.orientation_y = 0.0
-            metadata.orientation_z = 0.0
+            # Set QVIO position data (use provided pose or zeros as default)
+            if qvio_pose:
+                metadata.position_x = qvio_pose.pose.position.x
+                metadata.position_y = qvio_pose.pose.position.y
+                metadata.position_z = qvio_pose.pose.position.z
+                metadata.orientation_w = qvio_pose.pose.orientation.w
+                metadata.orientation_x = qvio_pose.pose.orientation.x
+                metadata.orientation_y = qvio_pose.pose.orientation.y
+                metadata.orientation_z = qvio_pose.pose.orientation.z
+            else:
+                # Default values when no QVIO data available
+                metadata.position_x = 0.0
+                metadata.position_y = 0.0
+                metadata.position_z = 0.0
+                metadata.orientation_w = 1.0
+                metadata.orientation_x = 0.0
+                metadata.orientation_y = 0.0
+                metadata.orientation_z = 0.0
 
-        # Write to appropriate CSV (hires1.csv or hires2.csv)
-        self.csv_logger.writeImageMetadata(camera_folder, metadata)
+            # Write to appropriate CSV (hires.csv or hires2.csv)
+            self.csv_logger.writeImageMetadata(camera_folder, metadata)
+            logging.debug(f"[RawImageClient] CSV metadata logged for {camera_name}, batch {batch_id}, frame {frame_idx}")
+            return True
+    
+        except Exception as e:
+            logging.error(f"[RawImageClient] Failed to log CSV metadata for {camera_name}: {e}")
+            return False
 
     def send_raw_image(
         self,
@@ -106,103 +126,66 @@ class RawImageClient:
         if not destination.endswith("/"):
             destination += "/"
 
-        destination += camera_name.lower() + "/"
-
-        # Generate batch_id if not provided (use current epoch seconds)
+          # Generate batch_id if not provided (use sequential counter)
         if batch_id is None:
-            import time
-
-            batch_id = int(time.time()) % 100000  # Use last 5 digits of epoch
-
-        # Handle "both" cameras - send commands to hires and hires2
-        if camera_name.lower() == "both":
-            results = []
-            cameras = ["hires", "hires2"]
-
-            for cam in cameras:
-                # Apply color/grey suffix
-                color_suffix = "_color" if color == 1 else "_grey"
-                cam_with_suffix = f"{cam}{color_suffix}"
-                print(f"[RawImageClient] Using {cam_with_suffix} (color={color})")
-
-                # Command format: use -n flag if capturing multiple frames, omit for single frame
-                if num_of_frames > 1:
-                    # For multiple frames with both cameras, use batch_id and timestamp
-                    filename_base = f"{batch_id}_"
-                    path = os.path.join(destination, filename_base)
-                    cmd = f"voxl-record-raw-image {cam_with_suffix} -d {path} -n {num_of_frames}"
-                else:
-                    # For single frame, include frame number
-                    filename_base = f"{batch_id}_{base_idx}_"
-                    path = os.path.join(destination, filename_base)
-                    cmd = f"voxl-record-raw-image {cam_with_suffix} -d {path} "
-
-                print(f"[RawImageClient] Sending command for {cam}: {cmd}")
-
-                try:
-                    result = self.client.send_sync(cmd)
-                    print(f"[RawImageClient] {cam} Result: {result}")
-                    results.append({"camera": cam, "result": result, "success": True})
-
-                    # Log to CSV after successful capture
-                    self._log_image_metadata(
-                        cam_with_suffix,
-                        batch_id,
-                        base_idx,
-                        destination,
-                        qvio_pose,
-                    )
-
-                except Exception as e:
-                    error_msg = f"Error sending raw image command to {cam}: {e}"
-                    print(f"[RawImageClient] {error_msg}")
-                    results.append(
-                        {"camera": cam, "result": error_msg, "success": False}
-                    )
-
-            # Return combined results
-            return {
-                "cameras": cameras,
-                "results": results,
-                "all_success": all(r["success"] for r in results),
-            }
+            batch_id = self._get_next_batch_id()
 
         # Single camera handling (existing logic)
+        if camera_name.lower().startswith("hires2"):
+            single_cam_destination = destination + "hires2/"
+        else:  # hires goes to hires folder
+            single_cam_destination = destination + "hires/"
+
         color_suffix = "_color" if color == 1 else "_grey"
+        cam_with_suffix = f"{camera_name}{color_suffix}"
         print(f"[RawImageClient] Using {camera_name}{color_suffix} (color={color})")
         camera_name = f"{camera_name}{color_suffix}"
 
         # Command format: use -n flag if capturing multiple frames, omit for single frame
         if num_of_frames > 1:
             filename_base = f"{batch_id}_"
-            path = os.path.join(destination, filename_base)
+            path = os.path.join(single_cam_destination, filename_base)
             cmd = f"voxl-record-raw-image {camera_name} -d {path} -n {num_of_frames}"
         else:
             filename_base = f"{batch_id}_{base_idx}_"
-            path = os.path.join(destination, filename_base)
+            path = os.path.join(single_cam_destination, filename_base)
             cmd = f"voxl-record-raw-image {camera_name} -d {path}"
 
         print(f"[RawImageClient] Sending command: {cmd}")
+        # Initialize status variables
+        image_success = False
+        csv_success = False
+        result = None
 
         try:
             result = self.client.send_sync(cmd)
             print(f"[RawImageClient] Result: {result}")
-
-            # Log to CSV after successful capture
-            self._log_image_metadata(
-                camera_name,
-                batch_id,
-                base_idx,
-                destination,
-                qvio_pose,
-            )
-
-            return result
+            # Check if result contains error
+            if result and "Error:" in result:
+                image_success = False
+                logging.error(f"[RawImageClient] Command failed: {result}")
+            else:
+                image_success = True
+                # Only log to CSV if image was successful
+                csv_success = self._log_image_metadata(
+                    cam_with_suffix,
+                    batch_id,
+                    base_idx,
+                    single_cam_destination,
+                    qvio_pose,
+                )
         except Exception as e:
             error_msg = f"Error sending raw image command: {e}"
-            print(f"[RawImageClient] {error_msg}")
-            return error_msg
+            logging.error(error_msg)
+            
 
+        # Return Outside the try-except to ensure it's always returned   
+        return {
+        "result": result,
+        "image_success": image_success,
+        "csv_success": csv_success,
+        "overall_success": image_success
+        }
     def send_multiple_raw_images(
         self,
         camera_name: str,
@@ -214,68 +197,112 @@ class RawImageClient:
         qvio_pose=None,
     ):
         """Send raw images - single command if no delay, multiple commands with delay"""
-        import time
-
         # Generate batch_id once for the entire batch
-        batch_id = int(time.time()) % 100000  # Use last 5 digits of epoch
+        batch_id = self._get_next_batch_id()  # Gets batch 0, 1, 2, etc.
         print(f"[RawImageClient] Batch ID: {batch_id}")
+        
+        if camera_name.lower() == "both":
+            # Handle "both" at this level, not in send_raw_image
+            cameras = ["hires", "hires2"]
+            results = []
 
-        # If no delay, use single command with -n flag
-        if delay_s == 0:
-            if num_of_frames > 1:
+             
+            if delay_s == 0:
+                # Fast mode - use -n flag for multiple frames per camera
+                for cam in cameras:
+                    result = self.send_raw_image(cam, destination, num_of_frames, 0, batch_id, color, qvio_pose)
+                    results.append(result)
+                    if cam == "hires":
+                        time.sleep(0.1)  # Brief delay between cameras
+                return results
+            else:
+                
+                for i in range(num_of_frames):  # For each frame
+                    for cam in cameras:  # Process each camera for this frame
+                        result = self.send_raw_image(
+                            cam,  # Pass individual camera name
+                            destination,
+                            1,  # Single frame
+                            i,  # Frame index
+                            batch_id,
+                            color,
+                            qvio_pose
+                        )
+                        results.append(result)
+                        
+                        # Small delay between cameras within same frame
+                        if cam == "hires":
+                            time.sleep(0.5)  # Delay between hires and hires2
+                    
+                    # Frame delay (except after last frame)
+                    if i < num_of_frames - 1:
+                        time.sleep(delay_s)
+                
+                return results
+        else:
+            # If no delay, use single command with -n flag
+            if delay_s == 0:
+                if num_of_frames > 1:
+                    print(
+                        f"[RawImageClient] WARNING: Taking {num_of_frames} frames with 0 time delta - frames will be captured as fast as possible without delay"
+                    )
+                    print(
+                        f"[RawImageClient] This may not provide the intended time spacing between frames"
+                    )
                 print(
-                    f"[RawImageClient] WARNING: Taking {num_of_frames} frames with 0 time delta - frames will be captured as fast as possible without delay"
+                    f"[RawImageClient] No delay - single command for {num_of_frames} frames"
                 )
-                print(
-                    f"[RawImageClient] This may not provide the intended time spacing between frames"
-                )
-            print(
-                f"[RawImageClient] No delay - single command for {num_of_frames} frames"
-            )
-            result = self.send_raw_image(
-                camera_name,
-                destination,
-                num_of_frames,
-                base_idx,
-                batch_id,
-                color,
-                qvio_pose,
-            )
-            return [result]
-
-        # If delay > 0, loop and call send_raw_image multiple times with single frames
-        print(f"[RawImageClient] Delay {delay_s}s - {num_of_frames} separate commands")
-        results = []
-
-        for i in range(num_of_frames):
-            current_idx = i  # Always start from 0 for each frame
-            print(
-                f"[RawImageClient] Taking raw image {i+1}/{num_of_frames} (idx: {current_idx})"
-            )
-
-            try:
-                # Call send_raw_image with single frame (1) and same batch timestamp/id
                 result = self.send_raw_image(
                     camera_name,
                     destination,
-                    1,
-                    current_idx,
+                    num_of_frames,
+                    base_idx,
                     batch_id,
                     color,
                     qvio_pose,
                 )
-                results.append(result)
+                return [result]
 
-            except Exception as e:
-                error_msg = f"Error taking raw image {i+1}: {e}"
-                print(f" → {error_msg}")
-                results.append(error_msg)
+            # If delay > 0, loop and call send_raw_image multiple times with single frames
+            logging.debug(f"[RawImageClient] Delay {delay_s}s - {num_of_frames} separate commands")
+            results = []
 
-            # Add delay between commands (except after the last one)
-            if i < num_of_frames - 1:
-                time.sleep(delay_s)
+            for i in range(num_of_frames):
+                current_idx = i  # Always start from 0 for each frame
+                logging.debug(
+                    f"[RawImageClient] Taking raw image {i+1}/{num_of_frames} (idx: {current_idx})"
+                )
 
-        return results
+                try:
+                    # Call send_raw_image with single frame (1) and same batch timestamp/id
+                    result = self.send_raw_image(
+                        camera_name,
+                        destination,
+                        1,
+                        current_idx,
+                        batch_id,
+                        color,
+                        qvio_pose,
+                    )
+                    results.append(result)
+
+                    # Check if the result indicates failure
+                    if isinstance(result, dict) and not result.get("overall_success", False):
+                        logging.warning(f"[RawImageClient] Image {i+1} failed but continuing with remaining images")
+                    elif isinstance(result, str) and "Error" in result:
+                        logging.warning(f"[RawImageClient] Image {i+1} failed: {result}")
+
+                except Exception as e:
+                    error_msg = f"Error taking raw image {i+1}: {e}"
+                    logging.debug(f" → {error_msg}")
+                    results.append({"result": error_msg, "image_success": False, "csv_success": False, "overall_success": False})
+
+
+                # Add delay between commands (except after the last one)
+                if i < num_of_frames - 1:
+                    time.sleep(delay_s)
+
+            return results
 
     def shutdown(self):
         """Shutdown the client connection"""

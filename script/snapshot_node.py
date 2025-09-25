@@ -111,10 +111,10 @@ class SnapshotNode:
         self.idx = 0
         # ---- Clients ----
         self.snapshot_client = SnapshotClient(
-            socket_path=socket_path, buffer_size=buffer_size
+            socket_path=socket_path, buffer_size=buffer_size,csv_logger=self.csv_logger
         )
         self.raw_client = RawImageClient(
-            socket_path=socket_path, buffer_size=buffer_size
+            socket_path=socket_path, buffer_size=buffer_size, csv_logger=self.csv_logger
         )
 
         # ---- Subscriptions ----
@@ -124,7 +124,7 @@ class SnapshotNode:
 
         # QVIO pose subscriber for position logging
         self.qvio_sub = rospy.Subscriber(
-            "/corvus/pose/fixed", PoseStamped, self.qvio_pose_callback
+            "/voxl/pose/fixed", PoseStamped, self.qvio_pose_callback
         )
         self.latest_qvio_pose = None
 
@@ -256,9 +256,8 @@ class SnapshotNode:
         """Take snapshot images using the snapshot client"""
         try:
 
-            client = SnapshotClient()
-            client.send_multiple_snapshots(
-                camera_pipeline, self.destination, self.num_images, 0, self.color
+            self.snapshot_client.send_multiple_snapshots(
+                camera_pipeline, self.destination, self.num_images, 0, self.frame_delta, self.color, self.latest_qvio_pose
             )
         except Exception as e:
             logging.error(f"[SnapshotNode] Snapshot error: {e}")
@@ -278,13 +277,12 @@ class SnapshotNode:
             os.makedirs(self.destination, exist_ok=True)
             logging.debug(f"[DEBUG] Destination directory created/verified")
 
-            client = RawImageClient(csv_logger=self.csv_logger)
 
 
             logging.info(
                 f"[SnapshotClient] Taking {self.num_images} raw images for camera pipeline: {camera_pipeline} with {self.frame_delta}s delay"
             )
-            result = client.send_multiple_raw_images(
+            result = self.raw_client.send_multiple_raw_images(
                 camera_pipeline,
                 self.destination,
                 self.num_images,

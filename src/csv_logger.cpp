@@ -15,8 +15,8 @@ CsvLogger::CsvLogger(const std::string& base_path)
 }
 
 CsvLogger::~CsvLogger() {
-    if (hires1_file_.is_open()) {
-        hires1_file_.close();
+    if (hires_file_.is_open()) {
+        hires_file_.close();
     }
     if (hires2_file_.is_open()) {
         hires2_file_.close();
@@ -31,11 +31,11 @@ bool CsvLogger::createDirectories(const std::string& path) {
     }
 
     // Create subdirectories for cameras
-    std::string hires1_dir = path + "/hires1";
+    std::string hires_dir = path + "/hires";
     std::string hires2_dir = path + "/hires2";
 
-    if (mkdir(hires1_dir.c_str(), 0755) != 0 && errno != EEXIST) {
-        std::cerr << "Failed to create hires1 directory" << std::endl;
+    if (mkdir(hires_dir.c_str(), 0755) != 0 && errno != EEXIST) {
+        std::cerr << "Failed to create hires directory" << std::endl;
         return false;
     }
 
@@ -59,21 +59,21 @@ bool CsvLogger::initialize() {
     }
 
     // Set CSV file paths
-    hires1_csv_path_ = base_path_ + "hires1.csv";
+    hires_csv_path_ = base_path_ + "hires.csv";
     hires2_csv_path_ = base_path_ + "hires2.csv";
     // qvio_csv_path_ = base_path_ + "qvio_sensor.csv";
 
     // Open CSV files and write headers
-    hires1_file_.open(hires1_csv_path_, std::ios::out | std::ios::app);
-    if (!hires1_file_.is_open()) {
-        std::cerr << "Failed to open hires1.csv" << std::endl;
+    hires_file_.open(hires_csv_path_, std::ios::out | std::ios::app);
+    if (!hires_file_.is_open()) {
+        std::cerr << "Failed to open hires.csv" << std::endl;
         return false;
     }
 
     // Check if file is empty to write header
-    hires1_file_.seekp(0, std::ios::end);
-    if (hires1_file_.tellp() == 0) {
-        hires1_file_ << "Batch_ID,Frame_Number,Height,Width,Encoding,"
+    hires_file_.seekp(0, std::ios::end);
+    if (hires_file_.tellp() == 0) {
+        hires_file_ << "Batch_ID,Frame_Number,Height,Width,Encoding,"
                      << "Image_File_Path,Image_Title_JPG,"
                      << "Position_X,Position_Y,Position_Z,"
                      << "Orientation_W,Orientation_X,Orientation_Y,Orientation_Z\n";
@@ -103,15 +103,13 @@ void CsvLogger::writeImageMetadata(const std::string& camera_name,
     std::ofstream* file_ptr = nullptr;
     std::mutex* mutex_ptr = nullptr;
 
-    if (camera_name == "hires1" || camera_name == "hires") {
-        file_ptr = &hires1_file_;
-        mutex_ptr = &hires1_mutex_;
-    } else if (camera_name == "hires2") {
+    // Simplified mapping - no more hires
+    if (camera_name.find("hires2") != std::string::npos) {
         file_ptr = &hires2_file_;
         mutex_ptr = &hires2_mutex_;
-    } else {
-        std::cerr << "[CsvLogger] Unknown camera: " << camera_name << std::endl;
-        return;
+    } else {  // hires, hires_grey, hires_color all go to hires
+        file_ptr = &hires_file_;  // Keep using hires_file_ internally
+        mutex_ptr = &hires_mutex_;
     }
 
     std::lock_guard<std::mutex> lock(*mutex_ptr);

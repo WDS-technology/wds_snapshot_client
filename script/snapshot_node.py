@@ -291,7 +291,12 @@ class SnapshotNode:
                 self.color,
                 self.latest_qvio_pose,
             )
-            logging.info(f"[DEBUG] Raw image result: {result}")
+            # Log only summary instead of full result to avoid log flooding
+            if isinstance(result, list) and len(result) > 0:
+                success_count = sum(1 for r in result if r.get('overall_success', False))
+                logging.info(f"[DEBUG] Raw image completed: {success_count}/{len(result)} images successful")
+            else:
+                logging.debug(f"[DEBUG] Raw image result summary: {str(result)[:100]}...")  # Only first 100 chars
 
             # Implement the raw image logic here if needed
             return "SUCCESS"

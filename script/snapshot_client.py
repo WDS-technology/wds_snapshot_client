@@ -46,7 +46,7 @@ class SnapshotClient:
         qvio_pose=None,
     ):
         """Log single image metadata to CSV - called once per frame"""
-        logging.info(f"[DEBUG] About to log CSV for camera_name='{camera_name}', batch={batch_id}, frame={frame_idx}")
+        logging.debug(f"About to log CSV for camera_name='{camera_name}', batch={batch_id}, frame={frame_idx}")
 
         if not self.csv_logger:
             logging.warning("[SnapshotClient] No CSV logger available, skipping metadata logging")

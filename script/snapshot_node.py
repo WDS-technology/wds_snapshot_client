@@ -114,7 +114,7 @@ class SnapshotNode:
             socket_path=socket_path, buffer_size=buffer_size,csv_logger=self.csv_logger
         )
         self.raw_client = RawImageClient(
-            socket_path=socket_path, buffer_size=buffer_size, csv_logger=self.csv_logger
+            socket_path=socket_path, buffer_size=buffer_size, csv_logger=self.csv_logger, file_logger=self.fileonly_logger
         )
 
         # ---- Subscriptions ----
@@ -226,7 +226,7 @@ class SnapshotNode:
                 logging.warning(f"Unsupported command type: {self.cmd_type}")
                 return
 
-            logging.info(f"[DEBUG] Processing command type: {self.cmd_type}")
+            logging.debug(f"Processing command type: {self.cmd_type}")
 
             if self.cmd_type == "SNAPSHOT":
                 results = self.take_snapshots(camera_pipeline)
@@ -294,9 +294,9 @@ class SnapshotNode:
             # Log only summary instead of full result to avoid log flooding
             if isinstance(result, list) and len(result) > 0:
                 success_count = sum(1 for r in result if r.get('overall_success', False))
-                logging.info(f"[DEBUG] Raw image completed: {success_count}/{len(result)} images successful")
+                logging.info(f"Raw image completed: {success_count}/{len(result)} images successful")
             else:
-                logging.debug(f"[DEBUG] Raw image result summary: {str(result)[:100]}...")  # Only first 100 chars
+                logging.debug(f"Raw image result summary: {str(result)[:100]}...")  # Only first 100 chars
 
             # Implement the raw image logic here if needed
             return "SUCCESS"

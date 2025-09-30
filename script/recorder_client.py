@@ -18,10 +18,11 @@ except ImportError:
 
 
 class RawImageClient:
-    def __init__(self, socket_path="/tmp/snapshot_comm_socket/snapshot.sock", buffer_size=4096, csv_logger=None):
+    def __init__(self, socket_path="/tmp/snapshot_comm_socket/snapshot.sock", buffer_size=4096, csv_logger=None, file_logger=None):
 
         self.client = UnixSocketClient(socket_path, buffer_size)
         self.csv_logger = csv_logger  # Use external logger instead of creating own
+        self.file_logger = file_logger  # File-only logger for voxl command output
 
         self.socket_path = socket_path
         self.buffer_size = buffer_size
@@ -50,7 +51,7 @@ class RawImageClient:
 
 
         """Log single image metadata to CSV - called once per frame"""
-        logging.info(f"[DEBUG] About to log CSV for camera_name='{camera_name}', batch={batch_id}, frame={frame_idx}")
+        logging.debug(f"About to log CSV for camera_name='{camera_name}', batch={batch_id}, frame={frame_idx}")
 
         if not self.csv_logger:
             logging.warning("[RawImageClient] No CSV logger available, skipping metadata logging")
@@ -111,6 +112,44 @@ class RawImageClient:
             logging.error(f"[RawImageClient] Failed to log CSV metadata for {camera_name}: {e}")
             return False
 
+    def _validate_path_length(self, destination: str, camera_name: str, batch_id: int, base_idx: int):
+        """Validate that the resulting filename won't exceed filesystem limits"""
+        # Calculate the maximum possible filename that voxl-record-raw-image will create
+        # Format: {batch_id}_{base_idx}_{camera_name}_{resolution}.{extension}
+
+        # Estimate maximum component sizes
+        batch_str = str(batch_id)
+        base_idx_str = str(base_idx)
+        max_camera_suffix = "_color" if "_" not in camera_name else ""
+        max_resolution = "4056x3040"
+        max_extension = ".gray"
+
+        # Build the maximum possible filename
+        max_filename = f"{batch_str}_{base_idx_str}_{camera_name}{max_camera_suffix}_{max_resolution}{max_extension}"
+
+        # Calculate total path length
+        full_path = destination + max_filename
+
+        # Check against actual observed limits (based on user test results)
+        # From testing: paths over ~100 chars cause filename truncation
+        # FOLDER name limit: 37 characters confirmed working (current test folder)
+        # Total path limit: 100 characters observed safe limit
+        MAX_FILENAME_LENGTH = 255  # Standard Linux limit
+        MAX_SAFE_PATH_LENGTH = 100  # Observed safe limit from user testing
+        WARNING_THRESHOLD = 95  # Start warning at 95 chars (closer to limit)
+
+        if len(max_filename) > MAX_FILENAME_LENGTH:
+            raise ValueError(f"Filename too long ({len(max_filename)} chars): {max_filename[:50]}... (max: {MAX_FILENAME_LENGTH})")
+
+        if len(full_path) > MAX_SAFE_PATH_LENGTH:
+            raise ValueError(f"Path too long ({len(full_path)} chars): {full_path} (max safe: {MAX_SAFE_PATH_LENGTH})")
+
+        # Log warning if getting very close to limits (95+ chars = danger zone)
+        if len(full_path) >= WARNING_THRESHOLD:
+            logging.warning(f"[RawImageClient] Path near truncation limit: {len(full_path)}/{MAX_SAFE_PATH_LENGTH} chars - filename truncation likely!")
+
+        return True
+
     def send_raw_image(
         self,
         camera_name: str,
@@ -141,6 +180,19 @@ class RawImageClient:
         print(f"[RawImageClient] Using {camera_name}{color_suffix} (color={color})")
         camera_name = f"{camera_name}{color_suffix}"
 
+        # Validate path length before proceeding
+        try:
+            self._validate_path_length(single_cam_destination, camera_name, batch_id, base_idx)
+        except ValueError as e:
+            error_msg = f"Path validation failed: {e}"
+            logging.error(f"[RawImageClient] {error_msg}")
+            return {
+                "result": f"Error: {error_msg}",
+                "image_success": False,
+                "csv_success": False,
+                "overall_success": False
+            }
+
         # Command format: use -n flag if capturing multiple frames, omit for single frame
         if num_of_frames > 1:
             filename_base = f"{batch_id}_"
@@ -151,7 +203,7 @@ class RawImageClient:
             path = os.path.join(single_cam_destination, filename_base)
             cmd = f"voxl-record-raw-image {camera_name} -d {path}"
 
-        print(f"[RawImageClient] Sending command: {cmd}")
+        logging.info(f"[RawImageClient] Sending command: {cmd}")
         # Initialize status variables
         image_success = False
         csv_success = False
@@ -159,7 +211,12 @@ class RawImageClient:
 
         try:
             result = self.client.send_sync(cmd)
-            print(f"[RawImageClient] Result: {result}")
+            # Log result to file only to prevent terminal clearing
+            if self.file_logger:
+                self.file_logger.info(f"[RawImageClient] Result: {result}")
+            else:
+                # Fallback to regular logging if no file logger
+                logging.debug(f"[RawImageClient] Result: {result}")
             # Check if result contains error
             if result and "Error:" in result:
                 image_success = False

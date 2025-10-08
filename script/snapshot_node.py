@@ -108,41 +108,45 @@ class SnapshotNode:
 
     def setup_logging(self):
         """
-        Configure logging to save  Python logs,
+        Configure logging to save Python logs,
         with timestamps shifted 3 hours forward.
+
+        If no subdirectories exist in the log base directory, create a fallback
+        directory named `temp_snapshot_folder` and ensure the `mission_operation_logs`
+        folder is created inside it.
         """
         try:
             print(f"[DEBUG] Setting up logging...")
             print(f"[DEBUG] log_file_path parameter: {self.log_file_path}")
             print(f"[DEBUG] destination path: {self.destination}")
             print(f"[DEBUG] FOLDER env var: {self.folder}")
+
             # Get the path from parameter
             log_path_param = self.log_file_path
 
-            # Determine log directory (if param is a dir or a dummy filepath)
-            if os.path.isdir(log_path_param):
-                log_dir = log_path_param
+            subdirs = [
+                os.path.join(log_path_param, d)
+                for d in os.listdir(log_path_param)
+                if os.path.isdir(os.path.join(log_path_param, d))
+            ]
+
+            if not subdirs:
+                # Fallback: Create temp_snapshot_folder
+                fallback_dir = os.path.join(log_path_param, "temp_snapshot_folder")
+                os.makedirs(fallback_dir, exist_ok=True)
+                print(f"[WARNING] No subdirectories found. Using fallback directory: {fallback_dir}")
+                latest_dir = fallback_dir
             else:
-                log_dir = os.path.dirname(log_path_param)
+                # Use the latest subdirectory
+                latest_dir = max(subdirs, key=os.path.getmtime)
 
-            os.makedirs(log_dir, exist_ok=True)
-            print(f"[DEBUG] Created log directory: {log_dir}")
-            print(f"[DEBUG] Directory exists: {os.path.exists(log_dir)}")
-            print(f"[DEBUG] Directory writable: {os.access(log_dir, os.W_OK)}")
-            logging.debug(f"Log directory ensured: {log_dir}")
+            mission_log_dir = os.path.join(latest_dir, "mission_operation_logs")
+            os.makedirs(mission_log_dir, exist_ok=True)
+            os.chmod(mission_log_dir, 0o777)
+            full_log_path = os.path.join(mission_log_dir, "wds_snapshot_client.log")
+            logging.debug(f"Log directory ensured: {full_log_path}")
 
-            # Generate timestamped filename
-            prefix = "wds_snapshot_client"
-            timestamp = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime(
-                "%d%m%Y_T%H%M%S_%f"
-            )[:-3]
-            filename = f"{prefix}_{timestamp}.log"
-            full_log_path = os.path.join(log_dir, filename)
-            self.log_file_path = full_log_path
-            print(f"[DEBUG] Full log path: {full_log_path}")
-            print(f"[DEBUG] Attempting to create log file...")
-
-            # Formatters
+            # Custom formatter that adds 3 hours
             plain_formatter = UTCPlus3Formatter(
                 node_name="wds_snapshot_client_node", use_color=False
             )
@@ -175,7 +179,7 @@ class SnapshotNode:
                 self.fileonly_logger.addHandler(fh)
 
         except Exception as e:
-            print(f"[DEBUG] LOGGING SETUP FAILED: {str(e)}")
+            print(f"LOGGING SETUP FAILED: {str(e)}")
             import traceback
 
             traceback.print_exc()
@@ -185,12 +189,12 @@ class SnapshotNode:
 
         camera_pipeline = msg.data.strip()
         if not camera_pipeline:
-            logging.warning("[SnapshotNode] Empty camera pipeline received; ignoring.")
+            logging.warning("Empty camera pipeline received; ignoring.")
             return
 
         # Use the cmd_type from environment variable (loaded in __init__)
-        print(
-            f"[SnapshotClient] Received command: {self.cmd_type} for camera pipeline: {camera_pipeline}"
+        logging.info(
+            f"Received command: {self.cmd_type} for camera pipeline: {camera_pipeline}"
         )
         try:
             # Convert string to enum for comparison
@@ -206,10 +210,19 @@ class SnapshotNode:
                 results = self.take_raw_image(camera_pipeline)
 
         except Exception as e:
-            logging.error(f"[SnapshotNode] Error while processing request: {e}")
+            logging.error(f" Error while processing request: {e}")
+
+    def qvio_pose_callback(self, msg: PoseStamped):
+        """Callback for QVIO pose data from /corvus/pose/fixed - just store latest pose"""
+        try:
+            self.latest_qvio_pose = msg
+            # logging.debug(f" QVIO pose updated: pos=({msg.pose.position.x:.3f}, {msg.pose.position.y:.3f}, {msg.pose.position.z:.3f})")
+        except Exception as e:
+            logging.error(f"Error processing QVIO pose: {e}")
+
 
     def shutdown(self):
-        logging.info("[SnapshotNode] Shutting down...")
+        logging.info("Shutting down...")
         try:
             self.snapshot_client.shutdown()
         except Exception:
@@ -224,26 +237,27 @@ class SnapshotNode:
                 camera_pipeline, self.destination, self.num_images, 0, self.color
             )
         except Exception as e:
-            logging.error(f"[SnapshotNode] Snapshot error: {e}")
+            logging.error(f" Snapshot error: {e}")
             return "ERROR"
 
     def take_raw_image(self, camera_pipeline):
         """Take raw images using the raw image client"""
         try:
-            print(f"[DEBUG] take_raw_image called with camera: {camera_pipeline}")
-            print(f"[DEBUG] Destination directory: {self.destination}")
-            print(f"[DEBUG] Number of images: {self.num_images}")
-            print(f"[DEBUG] Starting index: 0")
+            logging.debug(f"take_raw_image called with camera: {camera_pipeline}")
+            logging.debug(f" Destination directory: {self.destination}")
+            logging.debug(f" Number of images: {self.num_images}")
+            logging.debug(f" Starting index: 0")
             color_mode = "color" if self.color == 1 else "grey"
-            print(f"[DEBUG] Color mode: {color_mode} (COLOR={self.color})")
+            logging.debug(f" Color mode: {color_mode} (COLOR={self.color})")
 
             # Create destination directory if it doesn't exist
             os.makedirs(self.destination, exist_ok=True)
-            print(f"[DEBUG] Destination directory created/verified")
+            logging.debug(f" Destination directory created/verified")
 
-            client = RawImageClient()
-            print(
-                f"[SnapshotClient] Taking {self.num_images} raw images for camera pipeline: {camera_pipeline} with {self.frame_delta}s delay"
+
+
+            logging.info(
+                f"Taking {self.num_images} raw images for camera pipeline: {camera_pipeline} with {self.frame_delta}s delay"
             )
             result = client.send_multiple_raw_images(
                 camera_pipeline, self.destination, self.num_images, 0, self.frame_delta, self.color
@@ -252,7 +266,7 @@ class SnapshotNode:
             # Implement the raw image logic here if needed
             return "SUCCESS"
         except Exception as e:
-            logging.error(f"[SnapshotNode] Raw image error: {e}")
+            logging.error(f"Raw image error: {e}")
             return "ERROR"
 
 

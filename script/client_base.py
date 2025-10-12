@@ -2,6 +2,10 @@
 
 import socket
 import logging
+import time
+import os
+import errno
+
 
 class UnixSocketClient:
     def __init__(self, socket_path="/tmp/snapshot_comm_socket/snapshot.sock", buffer_size=4096):
@@ -26,7 +30,8 @@ class UnixSocketClient:
                 
                 logging.debug(f"[UnixSocketClient] Sent: {message}")
                 logging.debug(f"[UnixSocketClient] Received: {response}")
-                
+                time.sleep(0.1)  # 100ms delay
+
                 return response
                 
         except socket.timeout:

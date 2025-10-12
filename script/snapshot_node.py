@@ -2,6 +2,7 @@
 
 import rospy
 from std_msgs.msg import String
+from geometry_msgs.msg import PoseStamped
 import logging
 import os
 import sys
@@ -54,6 +55,14 @@ class UTCPlus3Formatter(logging.Formatter):
         return line
 
 
+try:
+    from py_csv_logger import CsvLogger, ImageMetadata
+except ImportError as e:
+    rospy.logerr(f"Failed to import C++ CsvLogger module: {e}")
+    # Handle the error, maybe exit or run in a mode without logging
+    CsvLogger, ImageMetadata = None, None
+
+
 class SnapshotNode:
     def __init__(self):
         rospy.init_node("wds_snapshot_client_node", anonymous=False)
@@ -76,10 +85,25 @@ class SnapshotNode:
             if self.folder
             else self.base_destination
         )
-        self.log_file_path = rospy.get_param(
-            "log_file_path", "/data/wds/logs"
-        )  # TODO: we need to fidn latest fodlr to save to since we are suppsoed to save in the mission flow logs
-        self.python_log_level = rospy.get_param("~python_log_level", "DEBUG").upper()
+        self.log_file_path = rospy.get_param("log_file_path", "/data/wds/logs")
+        # TODO: we need to fidn latest fodlr to save to since we are suppsoed to save in the mission flow logs
+             #  --- Set up logging ---
+        self.setup_logging()
+
+        # Instantiate the C++ CsvLogger
+        self.csv_logger = None
+        if CsvLogger is not None:
+            try:
+                self.csv_logger = CsvLogger(self.destination)
+                if not self.csv_logger.initialize():
+                    logging.error("Failed to initialize C++ CsvLogger!")
+                    self.csv_logger = None
+                else:
+                    logging.info("C++ CsvLogger initialized successfully.")
+            except Exception as e:
+                logging.error(f"Error instantiating C++ CsvLogger: {e}")
+                self.csv_logger = None
+
         socket_path = rospy.get_param(
             "~socket_path", "/tmp/snapshot_comm_socket/snapshot.sock"
         )
@@ -87,10 +111,10 @@ class SnapshotNode:
         self.idx = 0
         # ---- Clients ----
         self.snapshot_client = SnapshotClient(
-            socket_path=socket_path, buffer_size=buffer_size
+            socket_path=socket_path, buffer_size=buffer_size,csv_logger=self.csv_logger
         )
         self.raw_client = RawImageClient(
-            socket_path=socket_path, buffer_size=buffer_size
+            socket_path=socket_path, buffer_size=buffer_size, csv_logger=self.csv_logger, file_logger=self.fileonly_logger
         )
 
         # ---- Subscriptions ----
@@ -98,9 +122,13 @@ class SnapshotNode:
             "/corvus/payload/take_picture", String, self.take_picture_callback
         )
 
-        #  --- Set up logging ---
-        self.setup_logging()
+        # QVIO pose subscriber for position logging
+        self.qvio_sub = rospy.Subscriber(
+            "/voxl/pose/fixed", PoseStamped, self.qvio_pose_callback
+        )
+        self.latest_qvio_pose = None
 
+   
         logging.info(
             f"[SnapshotNode] Started. dest={self.destination} count={self.num_images} "
             f"type={self.cmd_type} socket={socket_path}"
@@ -163,7 +191,7 @@ class SnapshotNode:
 
             # Logger
             root_logger = logging.getLogger()
-            root_logger.setLevel(getattr(logging, self.python_log_level, logging.DEBUG))
+            root_logger.setLevel(logging.DEBUG)
             root_logger.handlers = []
             root_logger.addHandler(file_handler)
             root_logger.addHandler(stream_handler)
@@ -202,7 +230,7 @@ class SnapshotNode:
                 logging.warning(f"Unsupported command type: {self.cmd_type}")
                 return
 
-            print(f"[DEBUG] Processing command type: {self.cmd_type}")
+            logging.debug(f"Processing command type: {self.cmd_type}")
 
             if self.cmd_type == "SNAPSHOT":
                 results = self.take_snapshots(camera_pipeline)
@@ -221,6 +249,15 @@ class SnapshotNode:
             logging.error(f"Error processing QVIO pose: {e}")
 
 
+    def qvio_pose_callback(self, msg: PoseStamped):
+        """Callback for QVIO pose data from /corvus/pose/fixed - just store latest pose"""
+        try:
+            self.latest_qvio_pose = msg
+            # logging.debug(f"[SnapshotNode] QVIO pose updated: pos=({msg.pose.position.x:.3f}, {msg.pose.position.y:.3f}, {msg.pose.position.z:.3f})")
+        except Exception as e:
+            logging.error(f"[SnapshotNode] Error processing QVIO pose: {e}")
+
+
     def shutdown(self):
         logging.info("Shutting down...")
         try:
@@ -232,9 +269,8 @@ class SnapshotNode:
         """Take snapshot images using the snapshot client"""
         try:
 
-            client = SnapshotClient()
-            client.send_multiple_snapshots(
-                camera_pipeline, self.destination, self.num_images, 0, self.color
+            self.snapshot_client.send_multiple_snapshots(
+                camera_pipeline, self.destination, self.num_images, 0, self.frame_delta, self.color, self.latest_qvio_pose
             )
         except Exception as e:
             logging.error(f" Snapshot error: {e}")
@@ -253,16 +289,26 @@ class SnapshotNode:
             # Create destination directory if it doesn't exist
             os.makedirs(self.destination, exist_ok=True)
             logging.debug(f" Destination directory created/verified")
-
-
-
             logging.info(
                 f"Taking {self.num_images} raw images for camera pipeline: {camera_pipeline} with {self.frame_delta}s delay"
+
             )
-            result = client.send_multiple_raw_images(
-                camera_pipeline, self.destination, self.num_images, 0, self.frame_delta, self.color
+            result = self.raw_client.send_multiple_raw_images(
+                camera_pipeline,
+                self.destination,
+                self.num_images,
+                0,
+                self.frame_delta,
+                self.color,
+                self.latest_qvio_pose,
             )
-            print(f"[DEBUG] Raw image result: {result}")
+            # Log only summary instead of full result to avoid log flooding
+            if isinstance(result, list) and len(result) > 0:
+                success_count = sum(1 for r in result if r.get('overall_success', False))
+                logging.info(f"Raw image completed: {success_count}/{len(result)} images successful")
+            else:
+                logging.debug(f"Raw image result summary: {str(result)[:100]}...")  # Only first 100 chars
+
             # Implement the raw image logic here if needed
             return "SUCCESS"
         except Exception as e:

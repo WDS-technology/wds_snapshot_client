@@ -6,6 +6,7 @@ from geometry_msgs.msg import PoseStamped
 import logging
 import os
 import sys
+import pytz
 from rospy import loginfo, logwarn, logerr
 
 # Add current script directory to Python path
@@ -33,9 +34,10 @@ class UTCPlus3Formatter(logging.Formatter):
         super().__init__()
         self.node_name = node_name
         self.use_color = use_color
+        self.israel_tz = pytz.timezone("Asia/Jerusalem")
 
     def formatTime(self, record, datefmt=None):
-        dt = datetime.fromtimestamp(record.created) + timedelta(hours=3)
+        dt = datetime.fromtimestamp(record.created, tz=self.israel_tz)
         return dt.strftime("%H:%M:%S") + f":{int(record.msecs):03d}"
 
     # def formatTime(self, record, datefmt=None):
@@ -71,7 +73,8 @@ class SnapshotNode:
         self.node_name = rospy.get_name()
 
         # ---- Params (with defaults) ----
-
+        self.israel_tz = pytz.timezone("Asia/Jerusalem")
+        self.fileonly_logger = None
         self.base_destination = rospy.get_param(
             "~base_destination", "/data/wds/barcode_scan/"
         )
@@ -161,8 +164,12 @@ class SnapshotNode:
 
             # Generate timestamped filename
             prefix = "wds_snapshot_client"
-            timestamp = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime(
-                "%d%m%Y_T%H%M%S_%f"
+            current_time = datetime.now() 
+            # 2. Localize the time to the Israel timezone
+            dt_local_aware = self.israel_tz.localize(current_time) 
+            # 3. Format the time string
+            timestamp = dt_local_aware.strftime(
+                "%d%m%Y_T_%H%M%S_%f"
             )[:-3]
             filename = f"{prefix}_{timestamp}.log"
             full_log_path = os.path.join(log_dir, filename)

@@ -153,23 +153,30 @@ class SnapshotNode:
             print(f"[DEBUG] FOLDER env var: {self.folder}")
 
             # Get the path from parameter
-            log_path_param = self.log_file_path
+            log_base_dir = self.log_file_path
 
+            # Check for subdirectories
+            # Ensure the base directory exists before listing contents
+            if not os.path.isdir(log_base_dir):
+                os.makedirs(log_base_dir, exist_ok=True)
+            
             subdirs = [
-                os.path.join(log_path_param, d)
-                for d in os.listdir(log_path_param)
-                if os.path.isdir(os.path.join(log_path_param, d))
+                os.path.join(log_base_dir, d)
+                for d in os.listdir(log_base_dir)
+                if os.path.isdir(os.path.join(log_base_dir, d))
             ]
 
+           # Determine the final log directory (log_dir)
             if not subdirs:
-                # Fallback: Create temp_snapshot_folder
-                fallback_dir = os.path.join(log_path_param, "temp_snapshot_folder")
-                os.makedirs(fallback_dir, exist_ok=True)
-                print(f"[WARNING] No subdirectories found. Using fallback directory: {fallback_dir}")
-                latest_dir = fallback_dir
+                # Case 1: No subdirectories found -> use a fallback
+                log_dir = os.path.join(log_base_dir, "temp_snapshot_folder")
+                print(f"[WARNING] No subdirectories found. Using fallback directory: {log_dir}")
+                # NOTE: The variable 'latest_dir' from your original code is unnecessary here and removed.
             else:
-                log_dir = os.path.dirname(log_path_param)
-
+                # Case 2: Subdirectories found -> use the base log path itself
+                # This ensures log_dir is defined when subdirs exist.
+                log_dir = log_base_dir
+                
             os.makedirs(log_dir, exist_ok=True)
             print(f"[DEBUG] Created log directory: {log_dir}")
             print(f"[DEBUG] Directory exists: {os.path.exists(log_dir)}")

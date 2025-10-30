@@ -110,7 +110,7 @@ class SnapshotNode:
         socket_path = rospy.get_param(
             "~socket_path", "/tmp/snapshot_comm_socket/snapshot.sock"
         )
-        buffer_size = int(rospy.get_param("~buffer_size", 4096))
+        buffer_size = int(rospy.get_param("~buffer_size", 32768))
         self.idx = 0
         # ---- Clients ----
         self.snapshot_client = SnapshotClient(

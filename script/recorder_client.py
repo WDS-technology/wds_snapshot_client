@@ -217,8 +217,8 @@ class RawImageClient:
             else:
                 # Fallback to regular logging if no file logger
                 logging.debug(f"[RawImageClient] Result: {result}")
-            # Check if result contains error
-            if result and "Error:" in result:
+            # ✅ FAST validation - just 2 checks
+            if not result or "Error:" in result:
                 image_success = False
                 logging.error(f"[RawImageClient] Command failed: {result}")
             else:
